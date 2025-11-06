@@ -2,6 +2,10 @@
 
 A Model Context Protocol (MCP) server that provides SSH access to remote servers, allowing AI tools like Claude Desktop or VS Code to securely connect to your VPS for website management.
 
+<a href="https://glama.ai/mcp/servers/@mixelpixx/SSH-MCP">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@mixelpixx/SSH-MCP/badge" alt="SSH MCP server" />
+</a>
+
 ## Features
 
 - SSH connection management with password or key-based authentication
