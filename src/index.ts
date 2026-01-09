@@ -16,6 +16,11 @@ import * as path from "path";
 import * as os from "os";
 import * as dotenv from "dotenv";
 import { addUbuntuTools, ubuntuToolHandlers } from "./ubuntu-website-tools.js";
+import { addNetworkSwitchTools, networkSwitchToolHandlers } from "./network-switch-tools.js";
+import { addSerialConnectionTools, serialConnectionToolHandlers } from "./serial-connection-tools.js";
+import { addFirmwareTools, firmwareToolHandlers } from "./switch-firmware-tools.js";
+import { addSSHSetupTools, sshSetupToolHandlers } from "./ssh-setup-tools.js";
+import { addConsoleTransitionTools, consoleTransitionToolHandlers } from "./console-transition-tools.js";
 
 // Load environment variables from .env file if present
 dotenv.config();
@@ -177,93 +182,152 @@ class SSHMCPServer {
     
     // Add Ubuntu website management tools
     addUbuntuTools(this.server, this.connections);
+    
+    // Add network switch management tools
+    addNetworkSwitchTools(this.server, this.connections);
+    
+    // Add serial connection tools and get serial connections map
+    const serialTools = addSerialConnectionTools(this.server);
+    
+    // Add firmware management tools
+    addFirmwareTools(this.server, this.connections);
+    
+    // Add SSH setup tools (needs both SSH and serial connection maps)
+    addSSHSetupTools(this.server, this.connections, serialTools.getSerialConnections());
+
+    // Add console-to-SSH transition tools
+    addConsoleTransitionTools(this.server, serialTools.getSerialConnections());
   }
 
   private setupHandlers() {
+    // Collect all tool schemas from modules
+    const allToolSchemas: Array<{ name: string; description: string; inputSchema: any }> = [];
+
+    // Core SSH tools
+    allToolSchemas.push(
+      {
+        name: 'ssh_connect',
+        description: 'Connect to a remote server via SSH',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            host: { type: 'string', description: 'Hostname or IP address of the remote server' },
+            port: { type: 'number', description: 'SSH port (default: 22)' },
+            username: { type: 'string', description: 'SSH username' },
+            password: { type: 'string', description: 'SSH password (if not using key-based authentication)' },
+            privateKeyPath: { type: 'string', description: 'Path to private key file (if using key-based authentication)' },
+            passphrase: { type: 'string', description: 'Passphrase for private key (if needed)' },
+            connectionId: { type: 'string', description: 'Unique identifier for this connection' }
+          },
+          required: ['host', 'username']
+        }
+      },
+      {
+        name: 'ssh_exec',
+        description: 'Execute a command on the remote server',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            connectionId: { type: 'string', description: 'ID of an active SSH connection' },
+            command: { type: 'string', description: 'Command to execute' },
+            cwd: { type: 'string', description: 'Working directory for the command' },
+            timeout: { type: 'number', description: 'Command timeout in milliseconds' }
+          },
+          required: ['connectionId', 'command']
+        }
+      },
+      {
+        name: 'ssh_upload_file',
+        description: 'Upload a file to the remote server',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            connectionId: { type: 'string', description: 'ID of an active SSH connection' },
+            localPath: { type: 'string', description: 'Path to the local file' },
+            remotePath: { type: 'string', description: 'Path where the file should be saved on the remote server' }
+          },
+          required: ['connectionId', 'localPath', 'remotePath']
+        }
+      },
+      {
+        name: 'ssh_download_file',
+        description: 'Download a file from the remote server',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            connectionId: { type: 'string', description: 'ID of an active SSH connection' },
+            remotePath: { type: 'string', description: 'Path to the file on the remote server' },
+            localPath: { type: 'string', description: 'Path where the file should be saved locally' }
+          },
+          required: ['connectionId', 'remotePath', 'localPath']
+        }
+      },
+      {
+        name: 'ssh_list_files',
+        description: 'List files in a directory on the remote server',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            connectionId: { type: 'string', description: 'ID of an active SSH connection' },
+            remotePath: { type: 'string', description: 'Path to the directory on the remote server' }
+          },
+          required: ['connectionId', 'remotePath']
+        }
+      },
+      {
+        name: 'ssh_disconnect',
+        description: 'Close an SSH connection',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            connectionId: { type: 'string', description: 'ID of an active SSH connection' }
+          },
+          required: ['connectionId']
+        }
+      }
+    );
+
+    // Ubuntu website management tools
+    allToolSchemas.push(
+      { name: 'ubuntu_nginx_control', description: 'Control Nginx web server on Ubuntu', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of an active SSH connection' }, action: { type: 'string', description: 'Action: start, stop, restart, status, reload, check-config' }, sudo: { type: 'boolean', description: 'Use sudo (default: true)' } }, required: ['connectionId', 'action'] } },
+      { name: 'ubuntu_update_packages', description: 'Update system packages on Ubuntu', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of an active SSH connection' }, securityOnly: { type: 'boolean', description: 'Security updates only' }, upgrade: { type: 'boolean', description: 'Upgrade packages' } }, required: ['connectionId'] } },
+      { name: 'ubuntu_ssl_certificate', description: 'Manage SSL certificates using Let\'s Encrypt', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of an active SSH connection' }, action: { type: 'string', description: 'Action: issue, renew, status, list' }, domain: { type: 'string', description: 'Domain name' }, email: { type: 'string', description: 'Email for notifications' } }, required: ['connectionId', 'action'] } },
+      { name: 'ubuntu_website_deployment', description: 'Deploy website files and create backups', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of an active SSH connection' }, action: { type: 'string', description: 'Action: deploy, backup, restore' }, localPath: { type: 'string', description: 'Local path to files' }, remotePath: { type: 'string', description: 'Remote path' } }, required: ['connectionId', 'action'] } },
+      { name: 'ubuntu_ufw_firewall', description: 'Manage Ubuntu Uncomplicated Firewall (UFW)', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of an active SSH connection' }, action: { type: 'string', description: 'Action: enable, disable, status, allow, deny, delete' }, port: { type: 'string', description: 'Port or service' } }, required: ['connectionId', 'action'] } }
+    );
+
+    // Serial connection tools
+    allToolSchemas.push(
+      { name: 'serial_list_ports', description: 'List available USB-to-Serial ports on the system', inputSchema: { type: 'object', properties: {}, required: [] } },
+      { name: 'serial_connect', description: 'Connect to a network device via USB-to-Serial console port', inputSchema: { type: 'object', properties: { port: { type: 'string', description: 'Serial port (e.g., COM3, /dev/ttyUSB0)' }, baudRate: { type: 'number', description: 'Baud rate (default: 9600)' }, deviceType: { type: 'string', description: 'Device type: cisco, aruba, generic' }, connectionId: { type: 'string', description: 'Unique connection identifier' } }, required: ['port'] } },
+      { name: 'serial_send_command', description: 'Send a command to network device via serial connection', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' }, command: { type: 'string', description: 'Command to send' }, timeout: { type: 'number', description: 'Response timeout in ms' } }, required: ['connectionId', 'command'] } },
+      { name: 'serial_enter_enable', description: 'Enter privileged (enable) mode on the switch', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' }, enablePassword: { type: 'string', description: 'Enable password if required' } }, required: ['connectionId'] } },
+      { name: 'serial_enter_config', description: 'Enter configuration mode on the switch', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' } }, required: ['connectionId'] } },
+      { name: 'serial_exit_mode', description: 'Exit current mode (config -> enable -> user)', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' } }, required: ['connectionId'] } },
+      { name: 'serial_discover_device', description: 'Discover device type and capabilities via serial connection', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' } }, required: ['connectionId'] } },
+      { name: 'serial_send_interactive', description: 'Send command with automatic handling of confirmations and paging', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of active serial connection' }, command: { type: 'string', description: 'Command to send' }, confirmResponse: { type: 'string', description: 'Response to confirmations (default: yes)' }, timeout: { type: 'number', description: 'Total timeout in ms' } }, required: ['connectionId', 'command'] } },
+      { name: 'serial_list_connections', description: 'List all active serial connections', inputSchema: { type: 'object', properties: {}, required: [] } },
+      { name: 'serial_disconnect', description: 'Disconnect from a serial port', inputSchema: { type: 'object', properties: { connectionId: { type: 'string', description: 'ID of serial connection to disconnect' } }, required: ['connectionId'] } }
+    );
+
+    // SSH setup tools
+    allToolSchemas.push(
+      { name: 'switch_generate_ssh_config', description: 'Generate SSH configuration template for network switch', inputSchema: { type: 'object', properties: { deviceType: { type: 'string', description: 'Device type: cisco, aruba' }, securityLevel: { type: 'string', description: 'Security level: basic, secure' }, hostname: { type: 'string', description: 'Switch hostname' }, ip_address: { type: 'string', description: 'Management IP address' }, subnet_mask: { type: 'string', description: 'Subnet mask' }, gateway: { type: 'string', description: 'Default gateway' }, username: { type: 'string', description: 'SSH username' }, password: { type: 'string', description: 'SSH password' } }, required: ['hostname', 'ip_address', 'gateway', 'username', 'password'] } },
+      { name: 'switch_apply_ssh_config', description: 'Apply SSH configuration to switch via serial console connection', inputSchema: { type: 'object', properties: { serialConnectionId: { type: 'string', description: 'ID of active serial connection' }, deviceType: { type: 'string', description: 'Device type: cisco, aruba' }, hostname: { type: 'string', description: 'Switch hostname' }, ip_address: { type: 'string', description: 'Management IP' }, gateway: { type: 'string', description: 'Default gateway' }, username: { type: 'string', description: 'SSH username' }, password: { type: 'string', description: 'SSH password' }, confirmApply: { type: 'boolean', description: 'Confirm to apply (required)' } }, required: ['serialConnectionId', 'hostname', 'ip_address', 'gateway', 'username', 'password'] } },
+      { name: 'switch_verify_ssh_status', description: 'Check current SSH configuration status on the switch via serial', inputSchema: { type: 'object', properties: { serialConnectionId: { type: 'string', description: 'ID of active serial connection' } }, required: ['serialConnectionId'] } },
+      { name: 'switch_test_ssh_connection', description: 'Test SSH connection to newly configured switch', inputSchema: { type: 'object', properties: { ip_address: { type: 'string', description: 'Switch IP address' }, username: { type: 'string', description: 'SSH username' }, password: { type: 'string', description: 'SSH password' }, port: { type: 'number', description: 'SSH port (default: 22)' } }, required: ['ip_address', 'username', 'password'] } },
+      { name: 'switch_complete_ssh_setup', description: 'Complete end-to-end SSH setup workflow via console connection', inputSchema: { type: 'object', properties: { serialConnectionId: { type: 'string', description: 'ID of active serial connection' }, deviceType: { type: 'string', description: 'Device type: cisco, aruba' }, hostname: { type: 'string', description: 'Switch hostname' }, ip_address: { type: 'string', description: 'Management IP' }, gateway: { type: 'string', description: 'Default gateway' }, username: { type: 'string', description: 'SSH username' }, password: { type: 'string', description: 'SSH password' }, confirmSetup: { type: 'boolean', description: 'Confirm setup (required)' } }, required: ['serialConnectionId', 'hostname', 'ip_address', 'gateway', 'username', 'password'] } }
+    );
+
+    // Console transition tools
+    allToolSchemas.push(
+      { name: 'console_to_ssh_transition', description: 'Complete workflow to transition a network switch from console-only to SSH management', inputSchema: { type: 'object', properties: { port: { type: 'string', description: 'Serial port (e.g., COM3)' }, hostname: { type: 'string', description: 'Switch hostname' }, ip_address: { type: 'string', description: 'Management IP' }, gateway: { type: 'string', description: 'Default gateway' }, username: { type: 'string', description: 'SSH username' }, password: { type: 'string', description: 'SSH password' }, deviceType: { type: 'string', description: 'Device type: cisco, aruba (auto-detected if not set)' }, confirmTransition: { type: 'boolean', description: 'Confirm transition (required)' } }, required: ['port', 'hostname', 'ip_address', 'gateway', 'username', 'password'] } },
+      { name: 'quick_ssh_check', description: 'Quick check of SSH status on a switch via serial connection', inputSchema: { type: 'object', properties: { port: { type: 'string', description: 'Serial port' }, baudRate: { type: 'number', description: 'Baud rate (default: 9600)' }, enablePassword: { type: 'string', description: 'Enable password if required' } }, required: ['port'] } }
+    );
+
     // Register tool list handler
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: 'ssh_connect',
-          description: 'Connect to a remote server via SSH',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              host: { type: 'string', description: 'Hostname or IP address of the remote server' },
-              port: { type: 'number', description: 'SSH port (default: 22)' },
-              username: { type: 'string', description: 'SSH username' },
-              password: { type: 'string', description: 'SSH password (if not using key-based authentication)' },
-              privateKeyPath: { type: 'string', description: 'Path to private key file (if using key-based authentication)' },
-              passphrase: { type: 'string', description: 'Passphrase for private key (if needed)' },
-              connectionId: { type: 'string', description: 'Unique identifier for this connection' }
-            },
-            required: ['host', 'username']
-          }
-        },
-        {
-          name: 'ssh_exec',
-          description: 'Execute a command on the remote server',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              connectionId: { type: 'string', description: 'ID of an active SSH connection' },
-              command: { type: 'string', description: 'Command to execute' },
-              cwd: { type: 'string', description: 'Working directory for the command' },
-              timeout: { type: 'number', description: 'Command timeout in milliseconds' }
-            },
-            required: ['connectionId', 'command']
-          }
-        },
-        {
-          name: 'ssh_upload_file',
-          description: 'Upload a file to the remote server',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              connectionId: { type: 'string', description: 'ID of an active SSH connection' },
-              localPath: { type: 'string', description: 'Path to the local file' },
-              remotePath: { type: 'string', description: 'Path where the file should be saved on the remote server' }
-            },
-            required: ['connectionId', 'localPath', 'remotePath']
-          }
-        },
-        {
-          name: 'ssh_download_file',
-          description: 'Download a file from the remote server',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              connectionId: { type: 'string', description: 'ID of an active SSH connection' },
-              remotePath: { type: 'string', description: 'Path to the file on the remote server' },
-              localPath: { type: 'string', description: 'Path where the file should be saved locally' }
-            },
-            required: ['connectionId', 'remotePath', 'localPath']
-          }
-        },
-        {
-          name: 'ssh_list_files',
-          description: 'List files in a directory on the remote server',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              connectionId: { type: 'string', description: 'ID of an active SSH connection' },
-              remotePath: { type: 'string', description: 'Path to the directory on the remote server' }
-            },
-            required: ['connectionId', 'remotePath']
-          }
-        },
-        {
-          name: 'ssh_disconnect',
-          description: 'Close an SSH connection',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              connectionId: { type: 'string', description: 'ID of an active SSH connection' }
-            },
-            required: ['connectionId']
-          }
-        }
-      ]
+      tools: allToolSchemas
     }));
 
     // Register tool call handler
@@ -295,6 +359,31 @@ class SSHMCPServer {
         return ubuntuToolHandlers[toolName](request.params.arguments);
       }
       
+      // Handle network switch tools
+      if (toolName.startsWith('switch_') && networkSwitchToolHandlers[toolName]) {
+        return networkSwitchToolHandlers[toolName](request.params.arguments);
+      }
+      
+      // Handle serial connection tools
+      if (toolName.startsWith('serial_') && serialConnectionToolHandlers[toolName]) {
+        return serialConnectionToolHandlers[toolName](request.params.arguments);
+      }
+      
+      // Handle firmware management tools
+      if (toolName.startsWith('switch_') && toolName.includes('firmware') && firmwareToolHandlers[toolName]) {
+        return firmwareToolHandlers[toolName](request.params.arguments);
+      }
+      
+      // Handle SSH setup tools
+      if (toolName.startsWith('switch_') && (toolName.includes('ssh') || toolName.includes('config') || toolName.includes('setup')) && sshSetupToolHandlers[toolName]) {
+        return sshSetupToolHandlers[toolName](request.params.arguments);
+      }
+
+      // Handle console-to-SSH transition tools
+      if ((toolName.startsWith('console_') || toolName === 'quick_ssh_check') && consoleTransitionToolHandlers[toolName]) {
+        return consoleTransitionToolHandlers[toolName](request.params.arguments);
+      }
+
       throw new Error(`Unknown tool: ${toolName}`);
     });
   }
