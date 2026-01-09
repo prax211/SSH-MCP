@@ -1,0 +1,1 @@
+$(cat src/serial-connection-tools.ts)

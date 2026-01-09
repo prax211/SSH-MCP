@@ -1,0 +1,1 @@
+$(cat src/ssh-setup-tools.ts)
