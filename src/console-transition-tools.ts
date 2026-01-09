@@ -1,0 +1,1 @@
+$(cat src/console-transition-tools.ts)

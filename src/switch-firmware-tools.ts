@@ -1,0 +1,1 @@
+$(cat src/switch-firmware-tools.ts)
