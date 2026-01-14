@@ -2,7 +2,7 @@
   "mcpServers": {
     "ssh-server": {
       "command": "node",
-      "args": ["C:/SSH-MCP/build/index.js"],
+      "args": ["C:/Users/PaxtonTait/source/SSH-MCP/build/index.js"],
       "env": {
         "NODE_NO_WARNINGS": "1"
       }
